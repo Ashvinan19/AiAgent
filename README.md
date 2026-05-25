@@ -1,6 +1,6 @@
 # AI Coding Agent
 
-An autonomous AI agent that maps repositories, edits code, runs tests, and self corrects until you have working code, built with Gemini function calling and a sandboxed tool layer.
+autonomous AI agent that maps repositories, edits code, runs tests, and self corrects until you have working code, built with Gemini function calling and a sandboxed tool layer.
 
 ## Demo
 
@@ -8,16 +8,16 @@ An autonomous AI agent that maps repositories, edits code, runs tests, and self 
 
 *The agent maps the project, runs the calculator tests, and reports results.*
 
-**Text demo:** see [examples/fix-calculator-tests.md](examples/fix-calculator-tests.md) for a full tool-call transcript.
+**Text demo:** see [examples/fix-calculator-tests.md](examples/fix-calculator-tests.md) for a full transcript of whats happening in the code
 
 ## What This Project Does
 
-- **LLM tool use**: 10 function-calling tools wired through `google-genai`
-- **Sandboxed execution**: every file path resolved with `commonpath`; commands run inside a locked working directory
-- **Agent loop**: event-driven loop in `agent.py` with optional success-gated iteration (`--require-success`)
-- **Multi-turn chat**: `--chat` REPL keeps conversation history across prompts (`/clear`, `/exit`)
-- **Self-correction**: the model reads STDERR, patches code, and reruns until verification passes
-- **Tested tooling**: pytest suite across path sandboxing, edits, grep, execution, and session handling
+- Uses Gemini function calling to let the agent interact with tools and the filesystem
+- Safely handles file access using sandboxed path validation and a restricted working directory
+- Supports iterative agent loops where the model can inspect code, make changes, rerun programs, and verify fixes
+- Includes a multi-turn chat mode with persistent conversation history
+- Allows the agent to read errors from failed executions and attempt self-correction automatically
+- Includes automated tests for file operations, execution safety, path handling, and agent utilities
 
 ## Quickstart
 
@@ -33,19 +33,19 @@ Create `.env`:
 GEMINI_API_KEY=your_api_key_here
 ```
 
-Run the agent (sandbox defaults to the current directory):
+Run the agent (by default, it is sandboxed to the current working directory):
 
 ```bash
 uv run main.py "List the top-level files in this project"
 ```
 
-Target the bundled calculator demo:
+run bundled calculator demo:
 
 ```bash
 uv run main.py "Run the calculator unit tests" --working-dir ./calculator --verbose
 ```
 
-Interactive chat (history persists between turns):
+start Interactive chat (history persists between turns):
 
 ```bash
 uv run main.py --chat --working-dir ./calculator
@@ -84,23 +84,15 @@ Recorded agent workflows (prompt → tools → outcome):
 ## CLI
 
 ```bash
-# General task on current directory
-uv run main.py "Find all TODO comments in Python files"
+# Quick one-off task
+uv run main.py "List the Python files in this project"
 
-# Point at a specific project
-uv run main.py "Fix the failing test" --working-dir ./calculator
+# Coding workflow against a target project
+uv run main.py "Run the calculator tests and fix any failures" \
+  --working-dir ./calculator --require-success --verbose
 
-# Keep iterating until the last command exits 0 (only after code changes)
-uv run main.py "Fix tests and verify" --working-dir ./calculator --require-success
-
-# Verbose: token usage + full tool output
-uv run main.py "Explain how the calculator works" --working-dir ./calculator --verbose
-
-# Hard tasks: more loop iterations
-uv run main.py "Refactor the parser" --max-iterations 30
-
-# Multi-turn chat (no prompt argument)
-uv run main.py --chat --working-dir ./calculator --verbose
+# Interactive chat — history persists across turns
+uv run main.py --chat --working-dir ./calculator
 ```
 
 | Flag | Default | Description |
@@ -150,9 +142,9 @@ uv run ruff check .
 - **Sandbox scope** — `cwd`-locked execution, not a container/isolated VM
 - **Single LLM** — Gemini only; no provider abstraction layer
 
-## Roadmap
+## Future Implementation Roadmap
 
-- [ ] Streamlit UI on top of `run_agent()` events
+- [ ]  UI on top of `run_agent()` events
 - [ ] Smart context selection (file ranking / summarization)
 - [ ] Unified diff tool (`apply_patch`)
 
