@@ -15,8 +15,9 @@ An autonomous AI agent that maps repositories, edits code, runs tests, and self 
 - **LLM tool use**: 10 function-calling tools wired through `google-genai`
 - **Sandboxed execution**: every file path resolved with `commonpath`; commands run inside a locked working directory
 - **Agent loop**: event-driven loop in `agent.py` with optional success-gated iteration (`--require-success`)
-- **Self-correction**:the model reads STDERR, patches code, and reruns until verification passes
-- **Tested tooling**:41 pytest assertions across path sandboxing, edits, grep, and execution
+- **Multi-turn chat**: `--chat` REPL keeps conversation history across prompts (`/clear`, `/exit`)
+- **Self-correction**: the model reads STDERR, patches code, and reruns until verification passes
+- **Tested tooling**: pytest suite across path sandboxing, edits, grep, execution, and session handling
 
 ## Quickstart
 
@@ -42,6 +43,12 @@ Target the bundled calculator demo:
 
 ```bash
 uv run main.py "Run the calculator unit tests" --working-dir ./calculator --verbose
+```
+
+Interactive chat (history persists between turns):
+
+```bash
+uv run main.py --chat --working-dir ./calculator
 ```
 
 ## Architecture
@@ -91,14 +98,20 @@ uv run main.py "Explain how the calculator works" --working-dir ./calculator --v
 
 # Hard tasks: more loop iterations
 uv run main.py "Refactor the parser" --max-iterations 30
+
+# Multi-turn chat (no prompt argument)
+uv run main.py --chat --working-dir ./calculator --verbose
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--chat` | off | Interactive mode; history persists until `/clear` or `/exit` |
 | `--working-dir` | `.` | Sandboxed project root |
-| `--max-iterations` | `20` | Max agent loop turns |
+| `--max-iterations` | `20` | Max agent loop turns **per user message** |
 | `--require-success` | off | After modifying code, block final answer until a command exits 0 |
 | `--verbose` | off | Print token usage and full tool results |
+
+**Chat commands:** `/exit` quit · `/clear` reset history · `/help` show commands
 
 ## Project structure
 
@@ -113,7 +126,7 @@ AiAgent/
 │   ├── path_utils.py        # Sandbox path resolution (security boundary)
 │   ├── subprocess_utils.py
 │   └── ...
-├── tests/                   # 41 pytest assertions
+├── tests/                   # pytest suite (tools + session handling)
 ├── calculator/              # Demo sandbox project
 ├── examples/                # Recorded agent transcripts
 └── .github/workflows/ci.yml
@@ -132,29 +145,14 @@ uv run ruff check .
 
 ## Limitations
 
-- **One-shot CLI** — each invocation is a single prompt; no multi-turn chat session yet
-- **Context window** — files truncated at 10,000 characters; no smart file ranking or summarization
+- **Context window** — long chat sessions grow token usage; use `/clear` to reset history
+- **File truncation** — files capped at 10,000 characters; no smart file ranking or summarization
 - **Sandbox scope** — `cwd`-locked execution, not a container/isolated VM
 - **Single LLM** — Gemini only; no provider abstraction layer
-- **Demo recording** — add `docs/demo.gif` for a visual README demo (see [Recording a demo](#recording-a-demo))
-
-## Recording a demo
-
-1. Install dependencies and set `GEMINI_API_KEY` in `.env`.
-2. Run:
-   ```bash
-   uv run main.py "Run calculator unit tests and fix any failures" --working-dir ./calculator --verbose
-   ```
-3. Record the terminal (Windows: **Win+G** Xbox Game Bar, or [ScreenToGif](https://www.screentogif.com/)).
-4. Save a 20–30s clip as `docs/demo.gif` (keep under ~5 MB).
-5. Uncomment the image line in the **Demo** section above.
-
-Alternatively, use [asciinema](https://asciinema.org/) on Linux/macOS/WSL and embed the player link.
 
 ## Roadmap
 
 - [ ] Streamlit UI on top of `run_agent()` events
-- [ ] Multi-turn conversation session
 - [ ] Smart context selection (file ranking / summarization)
 - [ ] Unified diff tool (`apply_patch`)
 

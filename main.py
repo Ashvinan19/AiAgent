@@ -1,12 +1,92 @@
 import os
 import argparse
+from collections.abc import Iterator
+
 from dotenv import load_dotenv
 from google import genai
 
-from agent import AgentConfig, run_agent
+from agent import AgentConfig, AgentEvent, AgentSession, run_agent
 from config import DEFAULT_MAX_ITERATIONS, DEFAULT_WORKING_DIRECTORY
 
 load_dotenv()
+
+CHAT_HELP = """
+Chat commands:
+  /exit   — leave chat mode
+  /clear  — reset conversation history
+  /help   — show this help
+"""
+
+
+def print_events(events: Iterator[AgentEvent], verbose: bool) -> bool:
+    """Print agent events. Returns False if the turn ended with an error."""
+    for event in events:
+        if event.kind == "usage" and verbose:
+            print(
+                f"Tokens — prompt: {event.data['prompt_tokens']}, "
+                f"response: {event.data['response_tokens']}"
+            )
+        elif event.kind == "tool_call_result" and verbose:
+            print(f"-> {event.data['result']}")
+        elif event.kind == "retry_required" and verbose:
+            print(f"Retrying: {event.data['reason']}")
+        elif event.kind == "final_response":
+            print(event.data["text"])
+            print()
+        elif event.kind == "max_iterations":
+            print(f"Error: {event.data['message']}")
+            return False
+        elif event.kind == "error":
+            print(f"Error: {event.data['message']}")
+            return False
+    return True
+
+
+def run_single_turn(
+    client: genai.Client,
+    user_prompt: str,
+    config: AgentConfig,
+    verbose: bool,
+) -> None:
+    if verbose:
+        print(f"Prompt: {user_prompt}\n")
+
+    print_events(run_agent(client, user_prompt, config), verbose)
+
+
+def chat_loop(
+    client: genai.Client,
+    config: AgentConfig,
+    verbose: bool,
+) -> None:
+    session = AgentSession()
+    print("Chat mode — conversation history is preserved between turns.")
+    print(CHAT_HELP)
+
+    while True:
+        try:
+            user_input = input("\n>>> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nBye.")
+            break
+
+        if not user_input:
+            continue
+        if user_input == "/exit":
+            print("Bye.")
+            break
+        if user_input == "/clear":
+            session = AgentSession()
+            print("(conversation cleared)")
+            continue
+        if user_input == "/help":
+            print(CHAT_HELP)
+            continue
+
+        print_events(
+            run_agent(client, user_input, config, session=session),
+            verbose,
+        )
 
 
 def main() -> None:
@@ -19,7 +99,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="AI coding agent with repository awareness, editing, and execution"
     )
-    parser.add_argument("user_prompt", type=str, help="Task for the agent")
+    parser.add_argument(
+        "user_prompt",
+        nargs="?",
+        default=None,
+        help="Task for the agent (omit when using --chat)",
+    )
+    parser.add_argument(
+        "--chat",
+        action="store_true",
+        help="Interactive multi-turn chat; history persists until /clear or exit",
+    )
     parser.add_argument(
         "--verbose",
         action="store_true",
@@ -35,7 +125,7 @@ def main() -> None:
         "--max-iterations",
         type=int,
         default=DEFAULT_MAX_ITERATIONS,
-        help=f"Maximum agent loop iterations (default: {DEFAULT_MAX_ITERATIONS})",
+        help=f"Maximum agent loop iterations per turn (default: {DEFAULT_MAX_ITERATIONS})",
     )
     parser.add_argument(
         "--require-success",
@@ -44,6 +134,11 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+
+    if args.chat and args.user_prompt:
+        parser.error("Do not pass a prompt with --chat; type messages at the >>> prompt instead.")
+    if not args.chat and not args.user_prompt:
+        parser.error("Provide a prompt, or use --chat for interactive mode.")
 
     working_dir = os.path.abspath(args.working_dir)
     if not os.path.isdir(working_dir):
@@ -59,27 +154,13 @@ def main() -> None:
 
     if args.verbose:
         print(f"Working directory: {working_dir}")
-        print(f"Max iterations: {config.max_iterations}")
-        print(f"Require success: {config.require_success}")
-        print(f"Prompt: {args.user_prompt}\n")
+        print(f"Max iterations per turn: {config.max_iterations}")
+        print(f"Require success: {config.require_success}\n")
 
-    for event in run_agent(client, args.user_prompt, config):
-        if event.kind == "usage" and args.verbose:
-            print(
-                f"Tokens — prompt: {event.data['prompt_tokens']}, "
-                f"response: {event.data['response_tokens']}"
-            )
-        elif event.kind == "tool_call_result" and args.verbose:
-            print(f"-> {event.data['result']}")
-        elif event.kind == "retry_required" and args.verbose:
-            print(f"Retrying: {event.data['reason']}")
-        elif event.kind == "final_response":
-            print("Final response:")
-            print(event.data["text"])
-        elif event.kind == "max_iterations":
-            print(f"Error: {event.data['message']}")
-        elif event.kind == "error":
-            print(f"Error: {event.data['message']}")
+    if args.chat:
+        chat_loop(client, config, args.verbose)
+    else:
+        run_single_turn(client, args.user_prompt, config, args.verbose)
 
 
 if __name__ == "__main__":

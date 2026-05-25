@@ -53,19 +53,30 @@ def _parse_exit_code(result: str) -> int:
     return 0
 
 
+def prepare_turn(session: AgentSession | None, user_prompt: str) -> AgentSession:
+    """Start a new user turn, optionally continuing an existing conversation."""
+    if session is None:
+        session = AgentSession()
+
+    session.messages.append(
+        types.Content(
+            role="user",
+            parts=[types.Part(text=user_prompt)],
+        )
+    )
+    session.modified_project = False
+    session.verified_after_change = False
+    session.last_exit_code = None
+    return session
+
+
 def run_agent(
     client: genai.Client,
     user_prompt: str,
     config: AgentConfig,
+    session: AgentSession | None = None,
 ) -> Iterator[AgentEvent]:
-    session = AgentSession(
-        messages=[
-            types.Content(
-                role="user",
-                parts=[types.Part(text=user_prompt)],
-            )
-        ]
-    )
+    session = prepare_turn(session, user_prompt)
 
     for iteration in range(config.max_iterations):
         session.iteration = iteration + 1
