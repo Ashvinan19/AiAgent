@@ -1,6 +1,10 @@
 import os
-import subprocess
+import sys
 from google.genai import types
+
+from config import PYTHON_TIMEOUT_SECONDS
+from functions.path_utils import resolve_path
+from functions.subprocess_utils import format_process_output, run_in_sandbox
 
 schema_run_python_file = types.FunctionDeclaration(
     name="run_python_file",
@@ -18,62 +22,41 @@ schema_run_python_file = types.FunctionDeclaration(
                 description="Optional command line arguments",
             ),
         },
+        required=["file_path"],
     ),
 )
+
 
 def run_python_file(
     working_directory: str,
     file_path: str,
-    args: list[str] | None = None
+    args: list[str] | None = None,
 ) -> str:
-    try:
-        working_dir_abs = os.path.abspath(working_directory)
+    target_file, error = resolve_path(working_directory, file_path)
+    if error:
+        return error
 
-        target_file = os.path.normpath(
-            os.path.join(working_dir_abs, file_path)
-        )
+    if target_file is None:
+        return f'Error: Invalid path "{file_path}"'
 
-        valid_target_file = (
-            os.path.commonpath([working_dir_abs, target_file]) == working_dir_abs
-        )
+    if not os.path.isfile(target_file):
+        return f'Error: "{file_path}" does not exist or is not a regular file'
 
-        if not valid_target_file:
-            return f'Error: Cannot execute "{file_path}" as it is outside the permitted working directory'
+    if not file_path.endswith(".py"):
+        return f'Error: "{file_path}" is not a Python file'
 
-        if not os.path.isfile(target_file):
-            return f'Error: "{file_path}" does not exist or is not a regular file'
+    working_dir_abs = os.path.abspath(working_directory)
+    command = [sys.executable, target_file]
+    if args:
+        command.extend(args)
 
-        if not target_file.endswith(".py"):
-            return f'Error: "{file_path}" is not a Python file'
+    result, run_error = run_in_sandbox(
+        command, working_dir_abs, timeout=PYTHON_TIMEOUT_SECONDS
+    )
+    if run_error:
+        return run_error
 
-        command = ["python", target_file]
+    if result is None:
+        return "Error: No result from Python execution"
 
-        if args:
-            command.extend(args)
-
-        result = subprocess.run(
-            command,
-            cwd=working_dir_abs,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-
-        output = []
-
-        if result.returncode != 0:
-            output.append(f"Process exited with code {result.returncode}")
-
-        if result.stdout:
-            output.append(f"STDOUT:\n{result.stdout}")
-
-        if result.stderr:
-            output.append(f"STDERR:\n{result.stderr}")
-
-        if not result.stdout and not result.stderr:
-            output.append("No output produced")
-
-        return "\n".join(output)
-
-    except Exception as e:
-        return f"Error: executing Python file: {e}"
+    return format_process_output(result)

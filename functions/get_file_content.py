@@ -1,6 +1,8 @@
 import os
-from config import MAX_CHARS
 from google.genai import types
+
+from config import MAX_CHARS
+from functions.path_utils import resolve_path
 
 schema_get_file_content = types.FunctionDeclaration(
     name="get_file_content",
@@ -13,31 +15,32 @@ schema_get_file_content = types.FunctionDeclaration(
                 description="Path to the file relative to the working directory",
             ),
         },
+        required=["file_path"],
     ),
 )
 
+
 def get_file_content(working_directory: str, file_path: str) -> str:
+    target_file, error = resolve_path(working_directory, file_path)
+    if error:
+        return error
+
+    if target_file is None:
+        return f'Error: Invalid path "{file_path}"'
+
+    if not os.path.isfile(target_file):
+        return f'Error: File not found or is not a regular file: "{file_path}"'
+
     try:
-       working_dir_abs = os.path.abspath(working_directory)
-      
-       target_file = os.path.normpath(os.path.join(working_dir_abs,file_path))
-  
-       valid_target_file = (
-             os.path.commonpath([working_dir_abs,target_file]) == working_dir_abs
-       )
+        with open(target_file, encoding="utf-8", errors="replace") as f:
+            content = f.read(MAX_CHARS + 1)
 
-       if not valid_target_file:
-         return f'Error: Cannot read "{file_path}" as it is outside the permitted working directory'
-       
-       if not os.path.isfile(target_file):
-          return f'Error: File not found or is not a regular file: "{file_path}"'
-      
-       with open(target_file,"r") as f:
-           content = f.read(MAX_CHARS)
-           if f.read(1): 
-             content += f'[...File "{file_path}" truncated at {MAX_CHARS} characters]' 
-       return content 
+        if len(content) > MAX_CHARS:
+            return (
+                content[:MAX_CHARS]
+                + f'\n[...File "{file_path}" truncated at {MAX_CHARS} characters]'
+            )
+
+        return content
     except Exception as e:
-         return f"Error: {e}" 
-
-
+        return f"Error: {e}"

@@ -2,101 +2,85 @@ import os
 import argparse
 from dotenv import load_dotenv
 from google import genai
-from google.genai import types
-from prompts import system_prompt
-from call_function import available_functions, call_function
+
+from agent import AgentConfig, run_agent
+from config import DEFAULT_MAX_ITERATIONS, DEFAULT_WORKING_DIRECTORY
 
 load_dotenv()
 
-api_key = os.environ.get("GEMINI_API_KEY")
 
-if api_key is None:
-    raise RuntimeError(
-        "GEMINI_API_KEY not found. Make sure it is set in your .env file."
-    )
-
-parser = argparse.ArgumentParser(description="Chatbot")
-
-parser.add_argument(
-    "user_prompt",
-    type=str,
-    help="User prompt"
-)
-
-parser.add_argument(
-    "--verbose",
-    action="store_true",
-    help="Enable verbose output"
-)
-
-args = parser.parse_args()
-
-client = genai.Client(api_key=api_key)
-
-messages: list[types.Content] = [
-    types.Content(
-        role="user",
-        parts=[types.Part(text=args.user_prompt)]
-    )
-]
-
-for _ in range(20):
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=messages,
-        config=types.GenerateContentConfig(
-            tools=[available_functions],
-            system_instruction=system_prompt,
-            temperature=0,
-        ),
-    )
-
-    if response.usage_metadata is None:
-        raise RuntimeError("Response usage metadata is missing.")
-
-    if args.verbose:
-        print(f"User prompt: {args.user_prompt}")
-        print(f"Prompt tokens: {response.usage_metadata.prompt_token_count}")
-        print(f"Response tokens: {response.usage_metadata.candidates_token_count}")
-
-    if response.candidates:
-        for candidate in response.candidates:
-            messages.append(candidate.content)
-
-    function_responses = []
-
-    if response.function_calls:
-        for function_call in response.function_calls:
-            function_call_result = call_function(
-                function_call,
-                verbose=args.verbose
-            )
-
-            if not function_call_result.parts:
-                raise RuntimeError("Function call result has no parts")
-
-            if function_call_result.parts[0].function_response is None:
-                raise RuntimeError("Function response is missing")
-
-            if function_call_result.parts[0].function_response.response is None:
-                raise RuntimeError("Function response data is missing")
-
-            function_responses.append(function_call_result.parts[0])
-
-            if args.verbose:
-                print(f"-> {function_call_result.parts[0].function_response.response}")
-
-        messages.append(
-            types.Content(
-                role="user",
-                parts=function_responses
-            )
+def main() -> None:
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if api_key is None:
+        raise RuntimeError(
+            "GEMINI_API_KEY not found. Make sure it is set in your .env file."
         )
 
-    else:
-        print("Final response:")
-        print(response.text)
-        break
+    parser = argparse.ArgumentParser(
+        description="AI coding agent with repository awareness, editing, and execution"
+    )
+    parser.add_argument("user_prompt", type=str, help="Task for the agent")
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Show token usage and full tool output",
+    )
+    parser.add_argument(
+        "--working-dir",
+        type=str,
+        default=DEFAULT_WORKING_DIRECTORY,
+        help=f"Sandboxed project directory (default: {DEFAULT_WORKING_DIRECTORY})",
+    )
+    parser.add_argument(
+        "--max-iterations",
+        type=int,
+        default=DEFAULT_MAX_ITERATIONS,
+        help=f"Maximum agent loop iterations (default: {DEFAULT_MAX_ITERATIONS})",
+    )
+    parser.add_argument(
+        "--require-success",
+        action="store_true",
+        help="Keep iterating until the last command exits with code 0",
+    )
 
-else:
-    print("Error: Maximum iterations reached.")
+    args = parser.parse_args()
+
+    working_dir = os.path.abspath(args.working_dir)
+    if not os.path.isdir(working_dir):
+        raise RuntimeError(f"Working directory does not exist: {working_dir}")
+
+    client = genai.Client(api_key=api_key)
+    config = AgentConfig(
+        working_directory=working_dir,
+        max_iterations=args.max_iterations,
+        verbose=args.verbose,
+        require_success=args.require_success,
+    )
+
+    if args.verbose:
+        print(f"Working directory: {working_dir}")
+        print(f"Max iterations: {config.max_iterations}")
+        print(f"Require success: {config.require_success}")
+        print(f"Prompt: {args.user_prompt}\n")
+
+    for event in run_agent(client, args.user_prompt, config):
+        if event.kind == "usage" and args.verbose:
+            print(
+                f"Tokens — prompt: {event.data['prompt_tokens']}, "
+                f"response: {event.data['response_tokens']}"
+            )
+        elif event.kind == "tool_call_result" and args.verbose:
+            print(f"-> {event.data['result']}")
+        elif event.kind == "retry_required" and args.verbose:
+            print(f"Retrying: {event.data['reason']}")
+        elif event.kind == "final_response":
+            print("Final response:")
+            print(event.data["text"])
+        elif event.kind == "max_iterations":
+            print(f"Error: {event.data['message']}")
+        elif event.kind == "error":
+            print(f"Error: {event.data['message']}")
+
+
+if __name__ == "__main__":
+    main()
